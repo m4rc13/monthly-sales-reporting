@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Local/browser automation state
+.playwright-profile/
+
+# OS/editor noise
+.DS_Store
+
+# Generated or sensitive business artifacts
+input/
+reporting/
+html-files/
+
+# Env/secrets
+.env
+.env.*
+

@@ -1,0 +1,21 @@
+{
+  "name": "monthly-sales-reporting",
+  "version": "1.0.0",
+  "description": "Compute monthly vending sales payout and automate SeedLive JSON export",
+  "main": "zvsales.js",
+  "scripts": {
+    "calc": "node zvsales.js",
+    "report:pdf": "node scripts/generate-client-report-pdf.js",
+    "monthly:auto": "node scripts/monthly-auto.js",
+    "monthly:auto:headed": "node scripts/monthly-auto.js --headed",
+    "test": "echo \"No tests configured\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "pdfkit": "^0.17.2",
+    "playwright": "^1.58.2"
+  }
+}
