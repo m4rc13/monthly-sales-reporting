@@ -5,6 +5,21 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const { chromium } = require("playwright");
 
+const LOCATION_CONFIG = {
+  "old-bridge-ymca": {
+    regionName: "Middlesex County",
+    regionValue: "164397_414117",
+    defaultPdfTo: "Old Bridge YMCA Leadership Team",
+    defaultPdfLocation: "Old Bridge YMCA",
+  },
+  "manasquan-field-house": {
+    regionName: "Monmouth County",
+    regionValue: "164397_414119",
+    defaultPdfTo: "Manasquan Field House Leadership Team",
+    defaultPdfLocation: "Manasquan Field House",
+  },
+};
+
 function parseArgs(argv) {
   const args = {
     headed: false,
@@ -21,7 +36,7 @@ function parseArgs(argv) {
     pdfScriptPath: "scripts/generate-client-report-pdf.js",
     timeoutMs: 30000,
     reportTimeoutMs: 180000,
-    stepDelayMs: 2500,
+    stepDelayMs: 500,
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -48,6 +63,8 @@ function parseArgs(argv) {
     else if (token === "--pdf-script-path") args.pdfScriptPath = next, (i += 1);
     else if (token === "--pdf-to") args.pdfTo = next, (i += 1);
     else if (token === "--pdf-location") args.pdfLocation = next, (i += 1);
+    else if (token === "--location-key") args.locationKey = next, (i += 1);
+    else if (token === "--commission-pct") args.commissionPct = next, (i += 1);
     else if (token === "--pdf-date") args.pdfDate = next, (i += 1);
     else if (token === "--pdf-out") args.pdfOut = next, (i += 1);
     else if (token === "--timeout-ms") args.timeoutMs = Number(next), (i += 1);
@@ -68,6 +85,7 @@ function printHelp() {
       "Required:",
       "  --start <YYYY-MM-DD>",
       "  --end <YYYY-MM-DD>",
+      "  --commission-pct <number>",
       "",
       "Options:",
       "  --headed                      Run browser in headed mode",
@@ -85,17 +103,19 @@ function printHelp() {
       "  --no-generate-pdf             Skip branded client PDF generation (default)",
       "  --zvsales-path <path>         Calculator script path (default: zvsales.js)",
       "  --pdf-script-path <path>      PDF generator script (default: scripts/generate-client-report-pdf.js)",
+      "  --location-key <key>          Location key (required: old-bridge-ymca | manasquan-field-house)",
+      "  --commission-pct <number>     Commission percent per run (required, e.g. 25 or 20)",
       "  --pdf-to <text>               PDF recipient line",
       "  --pdf-location <text>         PDF location/client line",
       "  --pdf-date <YYYY-MM-DD>       PDF report date",
       "  --pdf-out <path>              PDF output path",
       "  --timeout-ms <number>         Step timeout in ms (default: 30000)",
       "  --report-timeout-ms <number>  Max wait for report result page (default: 180000)",
-      "  --step-delay-ms <number>      Delay between major steps (default: 2500)",
+      "  --step-delay-ms <number>      Delay between major steps (default: 500)",
       "  --help                        Show this help",
       "",
       "Example:",
-      "  npm run monthly:auto -- --start 2026-01-05 --end 2026-02-04 --headed",
+      "  npm run monthly:auto -- --start 2026-01-05 --end 2026-02-04 --location-key old-bridge-ymca --commission-pct 25 --headed",
       "",
     ].join("\n")
   );
@@ -120,6 +140,17 @@ function pad2(n) {
 
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
+}
+
+function normalizeCommissionPct(input) {
+  const raw = Number(input);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new Error(`--commission-pct must be a positive number. Got: ${input}`);
+  }
+  if (raw > 100) {
+    throw new Error(`--commission-pct must be between 0 and 100 (or decimal 0-1). Got: ${input}`);
+  }
+  return raw <= 1 ? raw : raw / 100;
 }
 
 async function locatorExists(locator) {
@@ -376,6 +407,69 @@ async function configureReport(page, startDate, endDate, timeoutMs) {
   }
 }
 
+async function ensureCustomerExpanded(page, timeoutMs) {
+  const regionCheckboxes = page.locator("input[name='customerId_regionId']");
+  if ((await regionCheckboxes.count().catch(() => 0)) > 0) return;
+
+  const companyTreeImage = page.locator("a.rpt-child-treeImage[data-customer-id]").first();
+  const customerRegionContainer = page.locator("div[id^='regions_of_']").first();
+
+  await companyTreeImage.waitFor({ state: "visible", timeout: timeoutMs });
+
+  // Expand using only the plus/tree icon so we never toggle customer checkboxes.
+  try {
+    await companyTreeImage.click({ timeout: 2000 });
+  } catch (_) {
+    try {
+      await companyTreeImage.click({ timeout: 2000, force: true });
+    } catch (_) {
+      await companyTreeImage.evaluate((el) => el.click());
+    }
+  }
+
+  const expansionWaitMs = Math.min(timeoutMs, 8000);
+  const waitStart = Date.now();
+  while (Date.now() - waitStart < expansionWaitMs) {
+    if ((await regionCheckboxes.count().catch(() => 0)) > 0) return;
+
+    if (await locatorExists(customerRegionContainer)) {
+      const html = await customerRegionContainer.first().innerHTML().catch(() => "");
+      if (/class="regions tree"/.test(html)) {
+        await page.waitForTimeout(100);
+        if ((await regionCheckboxes.count().catch(() => 0)) > 0) return;
+      }
+    }
+    await page.waitForTimeout(100);
+  }
+
+  throw new Error("Unable to expand customer tree to load region checkboxes.");
+}
+
+async function applyRegionSelection(page, locationConfig, timeoutMs) {
+  await ensureCustomerExpanded(page, timeoutMs);
+
+  const regionCheckboxes = page.locator("input[name='customerId_regionId']");
+  const count = await regionCheckboxes.count();
+  if (count === 0) {
+    throw new Error("Region checkboxes are not available on the report form.");
+  }
+
+  for (let i = 0; i < count; i += 1) {
+    const checkbox = regionCheckboxes.nth(i);
+    await checkbox.waitFor({ state: "visible", timeout: timeoutMs });
+    if (await checkbox.isChecked()) await checkbox.uncheck();
+  }
+
+  const target = page.locator(`input[name='customerId_regionId'][value='${locationConfig.regionValue}']`).first();
+  if (!(await locatorExists(target))) {
+    throw new Error(
+      `Could not find region checkbox for "${locationConfig.regionName}" (${locationConfig.regionValue}).`
+    );
+  }
+  await target.waitFor({ state: "visible", timeout: timeoutMs });
+  if (!(await target.isChecked())) await target.check();
+}
+
 async function clickRunReport(page, timeoutMs) {
   const clicked = await clickFirstExisting([page.locator("#Submit"), page.locator("input[type='submit'][value*='Run Report' i]")], timeoutMs);
 
@@ -417,12 +511,15 @@ function validateExportJson(downloadedPath) {
   return rows.length;
 }
 
-function runZvsales(zvsalesPath, inputPath) {
+function runZvsales(zvsalesPath, inputPath, revShare) {
   const resolved = path.resolve(zvsalesPath);
   if (!fs.existsSync(resolved)) {
     throw new Error(`zvsales script not found: ${resolved}`);
   }
-  return execFileSync(process.execPath, [resolved, inputPath], { encoding: "utf8" });
+  return execFileSync(process.execPath, [resolved, inputPath], {
+    encoding: "utf8",
+    env: { ...process.env, REV_SHARE: String(revShare) },
+  });
 }
 
 function runPdfReport(args, inputPath) {
@@ -436,6 +533,7 @@ function runPdfReport(args, inputPath) {
   if (args.pdfLocation) cmdArgs.push("--location", args.pdfLocation);
   if (args.pdfDate) cmdArgs.push("--date", args.pdfDate);
   if (args.pdfOut) cmdArgs.push("--out", args.pdfOut);
+  if (Number.isFinite(args.revShare)) cmdArgs.push("--rev-share", String(args.revShare));
 
   return execFileSync(process.execPath, cmdArgs, { encoding: "utf8" });
 }
@@ -454,6 +552,18 @@ async function main() {
   if (!args.start || !args.end) {
     throw new Error("Both --start and --end are required. Use --help for usage.");
   }
+  if (args.commissionPct == null) {
+    throw new Error("Missing required --commission-pct. Example: --commission-pct 25");
+  }
+  if (!args.locationKey) {
+    throw new Error("Missing required --location-key. Valid values: old-bridge-ymca, manasquan-field-house.");
+  }
+  const locationConfig = LOCATION_CONFIG[args.locationKey];
+  if (!locationConfig) {
+    throw new Error(
+      `Invalid --location-key "${args.locationKey}". Valid values: ${Object.keys(LOCATION_CONFIG).join(", ")}.`
+    );
+  }
   if (!Number.isFinite(args.timeoutMs) || args.timeoutMs <= 0) {
     throw new Error(`--timeout-ms must be a positive number. Got: ${args.timeoutMs}`);
   }
@@ -463,6 +573,7 @@ async function main() {
   if (!Number.isFinite(args.stepDelayMs) || args.stepDelayMs < 0) {
     throw new Error(`--step-delay-ms must be 0 or higher. Got: ${args.stepDelayMs}`);
   }
+  const revShare = normalizeCommissionPct(args.commissionPct);
 
   const startDate = parseISODate(args.start, "start");
   const endDate = parseISODate(args.end, "end");
@@ -500,6 +611,7 @@ async function main() {
 
     logStep(`Applying report settings for ${args.start} -> ${args.end}`);
     await configureReport(page, startDate, endDate, args.timeoutMs);
+    await applyRegionSelection(page, locationConfig, args.timeoutMs);
     await waitStepDelay(page, args.stepDelayMs);
 
     logStep("Running report");
@@ -522,7 +634,7 @@ async function main() {
 
     if (args.runZvsales) {
       logStep("Running payout calculator");
-      const result = runZvsales(args.zvsalesPath, outputPath);
+      const result = runZvsales(args.zvsalesPath, outputPath, revShare);
       process.stdout.write(`${result}\n`);
     } else {
       process.stdout.write("[info] Skipped zvsales execution (--no-run-zvsales).\n");
@@ -530,7 +642,13 @@ async function main() {
 
     if (args.generatePdf) {
       logStep("Generating branded client PDF");
-      const pdfResult = runPdfReport(args, outputPath);
+      const pdfArgs = {
+        ...args,
+        revShare,
+        pdfTo: args.pdfTo || locationConfig.defaultPdfTo,
+        pdfLocation: args.pdfLocation || locationConfig.defaultPdfLocation,
+      };
+      const pdfResult = runPdfReport(pdfArgs, outputPath);
       process.stdout.write(`${pdfResult}\n`);
     } else {
       process.stdout.write("[info] Skipped PDF generation (--no-generate-pdf).\n");

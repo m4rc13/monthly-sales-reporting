@@ -7,7 +7,7 @@ const { loadRowsFromFile, calculateFromRows, money } = require("../lib/sales-cal
 
 function parseArgs(argv) {
   const args = {
-    to: "Old Bridge YMCA Leadership Team",
+    to: "Client Leadership Team",
     from: "ZenVend",
     subject: "Vending Machine Sales Analytics Report",
     logo: "images/master-brand.png",
@@ -52,8 +52,8 @@ function printHelp() {
       "  --input <path>               Activity Analysis JSON",
       "",
       "Optional:",
-      '  --to <recipient>             Recipient line (default: "Old Bridge YMCA Leadership Team")',
-      "  --location <name>            Location/client description line",
+      '  --to <recipient>             Recipient line (default: "Client Leadership Team")',
+      "  --location <name>            Location/client description line (auto-filled by monthly-auto when available)",
       "  --from <name>                Sender (default: ZenVend)",
       "  --subject <text>             Subject line",
       "  --date <YYYY-MM-DD>          Report date (default: today)",

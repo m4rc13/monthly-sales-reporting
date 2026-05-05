@@ -6,6 +6,20 @@ It uses:
 - `zvsales.js` to compute payout from a SeedLive JSON export.
 - `scripts/monthly-auto.js` to automate SeedLive report generation/download with Playwright.
 
+## Next Month Quick Run
+
+From project root, run this one command (update dates + credentials):
+
+```bash
+npm run monthly:auto -- --start 2026-04-05 --end 2026-05-04 --location-key old-bridge-ymca --commission-pct 25 --headed --username "YOUR_USERNAME" --password 'YOUR_PASSWORD' --generate-pdf
+```
+
+What this does in one run:
+- Logs into SeedLive
+- Generates and downloads the JSON activity report
+- Calculates sales/payout output
+- Generates the branded one-page PDF in `reporting/`
+
 ## What This Calculates
 
 Given a SeedLive "Activity Analysis - All" JSON export, the calculator prints:
@@ -65,7 +79,7 @@ Set parameters (see `how-to-gen-json/monthly-sales-step-1.png`):
   - `Sale Amount`
   - `# of Items`
 - Format: leave default `Html`
-- Companies / Regions / Devices: leave default
+- Companies / Regions / Devices: expand company and leave only the target region checked
 
 Click **Run Report**.
 
@@ -114,29 +128,32 @@ Optional env overrides:
 Required:
 - `--start YYYY-MM-DD`
 - `--end YYYY-MM-DD`
+- `--commission-pct <number>` (e.g. `25` for 25% or `20` for 20%)
 
 Example:
 
 ```bash
-npm run monthly:auto -- --start 2026-01-05 --end 2026-02-04
+npm run monthly:auto -- --start 2026-01-05 --end 2026-02-04 --location-key old-bridge-ymca --commission-pct 25
 ```
 
 Run headed (visible browser):
 
 ```bash
-npm run monthly:auto -- --start 2026-01-05 --end 2026-02-04 --headed
+npm run monthly:auto -- --start 2026-01-05 --end 2026-02-04 --location-key old-bridge-ymca --commission-pct 25 --headed
 ```
 
 Run full pipeline including branded PDF:
 
 ```bash
-npm run monthly:auto -- --start 2026-01-05 --end 2026-02-04 --headed --generate-pdf --pdf-location "Old Bridge YMCA"
+npm run monthly:auto -- --start 2026-01-05 --end 2026-02-04 --location-key old-bridge-ymca --commission-pct 25 --headed --generate-pdf
 ```
 
 ### CLI Options
 
 - `--start <YYYY-MM-DD>` report start date (required)
 - `--end <YYYY-MM-DD>` report end date (required)
+- `--location-key <key>` location target (required): `old-bridge-ymca` or `manasquan-field-house`
+- `--commission-pct <number>` commission percent (required), e.g. `25` (YMCA) or `20` (Manasquan)
 - `--headed` run browser with UI (default headless)
 - `--base-url <url>` SeedLive base URL (default `https://seedlive.com`)
 - `--home-url <url>` home page URL (default `https://seedlive.com/home.i`)
@@ -154,11 +171,31 @@ npm run monthly:auto -- --start 2026-01-05 --end 2026-02-04 --headed --generate-
 - `--pdf-script-path <path>` PDF generator script path (default `scripts/generate-client-report-pdf.js`)
 - `--pdf-to <text>` recipient line for PDF (`To:`)
 - `--pdf-location <text>` location line in PDF intro
+### Location Key Mapping
+
+`monthly-auto` now selects exactly one SeedLive region before running the report:
+
+- `old-bridge-ymca` -> `Middlesex County` (region value `164397_414117`)
+- `manasquan-field-house` -> `Monmouth County` (region value `164397_414119`)
+
+Behavior:
+- The script expands the company tree if needed.
+- It unchecks all region checkboxes.
+- It checks only the mapped region for the selected `--location-key`.
+
+Suggested commission values:
+- `old-bridge-ymca` -> `--commission-pct 25`
+- `manasquan-field-house` -> `--commission-pct 20`
+
+PDF defaults by location key (can still be overridden with CLI flags):
+- `old-bridge-ymca` -> `--pdf-to "Old Bridge YMCA Leadership Team"`, `--pdf-location "Old Bridge YMCA"`
+- `manasquan-field-house` -> `--pdf-to "Manasquan Field House Leadership Team"`, `--pdf-location "Manasquan Field House"`
+
 - `--pdf-date <YYYY-MM-DD>` report date shown in PDF
 - `--pdf-out <path>` exact output PDF path
 - `--timeout-ms <number>` per-step timeout (default `30000`)
 - `--report-timeout-ms <number>` wait limit for report generation/results (default `180000`)
-- `--step-delay-ms <number>` delay between major steps for UI/session stability (default `2500`)
+- `--step-delay-ms <number>` delay between major steps for UI/session stability (default `500`)
 - `--help` show usage
 
 ### Authentication Notes
@@ -190,7 +227,7 @@ npm run report:pdf -- --input "input/json/Activity Analysis - All from January 0
 ```
 
 Defaults:
-- To: `Old Bridge YMCA Leadership Team`
+- To: `Client Leadership Team`
 - Logo: `images/master-brand.png`
 - Output directory: `reporting/`
 - COG / fee rates: same defaults as calculator (`COG=50%`, `PROC_FIXED=9.95`, `PROC_RATE=0.0595`, `REV_SHARE=25%`)
