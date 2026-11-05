@@ -5,6 +5,9 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const { chromium } = require("playwright");
 
+/** ZenVend LLC in SeedLive — parent of all region nodes. */
+const COMPANY_CUSTOMER_ID = "164397";
+
 const LOCATION_CONFIG = {
   "old-bridge-ymca": {
     regionName: "Middlesex County",
@@ -70,6 +73,7 @@ function parseArgs(argv) {
     else if (token === "--timeout-ms") args.timeoutMs = Number(next), (i += 1);
     else if (token === "--report-timeout-ms") args.reportTimeoutMs = Number(next), (i += 1);
     else if (token === "--step-delay-ms") args.stepDelayMs = Number(next), (i += 1);
+    else if (token === "--debug") args.debug = true;
     else throw new Error(`Unknown argument: ${token}`);
   }
 
@@ -112,6 +116,7 @@ function printHelp() {
       "  --timeout-ms <number>         Step timeout in ms (default: 30000)",
       "  --report-timeout-ms <number>  Max wait for report result page (default: 180000)",
       "  --step-delay-ms <number>      Delay between major steps (default: 500)",
+      "  --debug                       Log region-tree expansion diagnostics",
       "  --help                        Show this help",
       "",
       "Example:",
@@ -407,46 +412,47 @@ async function configureReport(page, startDate, endDate, timeoutMs) {
   }
 }
 
-async function ensureCustomerExpanded(page, timeoutMs) {
-  const regionCheckboxes = page.locator("input[name='customerId_regionId']");
-  if ((await regionCheckboxes.count().catch(() => 0)) > 0) return;
+async function ensureCustomerExpanded(page, timeoutMs, debug = false) {
+  const customerId = COMPANY_CUSTOMER_ID;
+  if ((await countRegionCheckboxes(page)) > 0) {
+    logDebug(debug, "region checkboxes already present; skip expand");
+    return;
+  }
 
-  const companyTreeImage = page.locator("a.rpt-child-treeImage[data-customer-id]").first();
-  const customerRegionContainer = page.locator("div[id^='regions_of_']").first();
+  const companiesSection = page.locator("#customerRegion, #terminalsTree, .parentTreeDiv").first();
+  if (await locatorExists(companiesSection)) {
+    await companiesSection.scrollIntoViewIfNeeded();
+  }
 
-  await companyTreeImage.waitFor({ state: "visible", timeout: timeoutMs });
+  await ensureCompanySelected(page, customerId, timeoutMs);
 
-  // Expand using only the plus/tree icon so we never toggle customer checkboxes.
-  try {
-    await companyTreeImage.click({ timeout: 2000 });
-  } catch (_) {
-    try {
-      await companyTreeImage.click({ timeout: 2000, force: true });
-    } catch (_) {
-      await companyTreeImage.evaluate((el) => el.click());
+  if (await waitForRegionCheckboxes(page, customerId, 1500, debug)) return;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if ((await countRegionCheckboxes(page)) > 0) return;
+
+    const before = await readRegionsContainerState(page, customerId);
+    logDebug(debug, `expand attempt ${attempt}; before=${JSON.stringify(before.text.slice(0, 80))}`);
+
+    const clickMethod = await clickCompanyTreeExpandIcon(page, customerId);
+    logDebug(debug, `expand click via ${clickMethod}`);
+
+    if (await waitForRegionCheckboxes(page, customerId, timeoutMs, debug)) return;
+
+    if (attempt < 3 && (await countRegionCheckboxes(page)) === 0) {
+      await page.waitForTimeout(400);
     }
   }
 
-  const expansionWaitMs = Math.min(timeoutMs, 8000);
-  const waitStart = Date.now();
-  while (Date.now() - waitStart < expansionWaitMs) {
-    if ((await regionCheckboxes.count().catch(() => 0)) > 0) return;
-
-    if (await locatorExists(customerRegionContainer)) {
-      const html = await customerRegionContainer.first().innerHTML().catch(() => "");
-      if (/class="regions tree"/.test(html)) {
-        await page.waitForTimeout(100);
-        if ((await regionCheckboxes.count().catch(() => 0)) > 0) return;
-      }
-    }
-    await page.waitForTimeout(100);
-  }
-
-  throw new Error("Unable to expand customer tree to load region checkboxes.");
+  const finalState = await readRegionsContainerState(page, customerId);
+  throw new Error(
+    `Unable to expand customer tree to load region checkboxes. ` +
+      `regions_${customerId} text=${JSON.stringify(finalState.text.slice(0, 120))}`
+  );
 }
 
-async function applyRegionSelection(page, locationConfig, timeoutMs) {
-  await ensureCustomerExpanded(page, timeoutMs);
+async function applyRegionSelection(page, locationConfig, timeoutMs, debug = false) {
+  await ensureCustomerExpanded(page, timeoutMs, debug);
 
   const regionCheckboxes = page.locator("input[name='customerId_regionId']");
   const count = await regionCheckboxes.count();
@@ -542,6 +548,101 @@ function logStep(msg) {
   process.stdout.write(`\n[step] ${msg}\n`);
 }
 
+function logDebug(enabled, msg) {
+  if (enabled) process.stdout.write(`[debug] ${msg}\n`);
+}
+
+async function countRegionCheckboxes(page) {
+  return page.locator("input[name='customerId_regionId']").count().catch(() => 0);
+}
+
+async function ensureCompanySelected(page, customerId, timeoutMs) {
+  const companyCheckbox = page
+    .locator(`input.customerCheckbox[name='params.customerIds'][value='${customerId}']`)
+    .first();
+  await companyCheckbox.waitFor({ state: "visible", timeout: timeoutMs });
+  if (!(await companyCheckbox.isChecked())) {
+    await companyCheckbox.check();
+    await page.waitForTimeout(250);
+  }
+}
+
+async function clickCompanyTreeExpandIcon(page, customerId) {
+  const companyTreeImage = page.locator(`a.rpt-child-treeImage[data-customer-id='${customerId}']`).first();
+  await companyTreeImage.waitFor({ state: "visible", timeout: 5000 });
+  await companyTreeImage.scrollIntoViewIfNeeded();
+
+  const box = await companyTreeImage.boundingBox();
+  if (box) {
+    // Click the plus icon on the left; the company checkbox overlaps the anchor box on the right.
+    await page.mouse.click(box.x + Math.min(8, Math.max(2, box.width * 0.25)), box.y + box.height / 2);
+    return "mouse";
+  }
+
+  try {
+    await companyTreeImage.click({ timeout: 2000 });
+    return "click";
+  } catch (_) {
+    try {
+      await companyTreeImage.click({ timeout: 2000, force: true });
+      return "force";
+    } catch (_) {
+      await companyTreeImage.evaluate((el) => {
+        el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      });
+      return "dispatch";
+    }
+  }
+}
+
+async function readRegionsContainerState(page, customerId) {
+  const regionsDiv = page.locator(`div#regions_${customerId}`).first();
+  if (!(await locatorExists(regionsDiv))) {
+    return { exists: false, text: "", html: "" };
+  }
+  const text = await regionsDiv.innerText().catch(() => "");
+  const html = await regionsDiv.innerHTML().catch(() => "");
+  return { exists: true, text, html };
+}
+
+async function waitForRegionCheckboxes(page, customerId, timeoutMs, debug) {
+  const regionsDiv = page.locator(`div#regions_${customerId}`).first();
+  const waitStart = Date.now();
+
+  while (Date.now() - waitStart < timeoutMs) {
+    const count = await countRegionCheckboxes(page);
+    if (count > 0) {
+      logDebug(debug, `region checkboxes ready (count=${count})`);
+      return true;
+    }
+
+    const state = await readRegionsContainerState(page, customerId);
+    if (state.exists) {
+      const stillLoading = /loading/i.test(state.text) || /loading/i.test(state.html);
+      const hasRegionMarkup =
+        /customerId_regionId/.test(state.html) ||
+        /class="regions tree"/.test(state.html) ||
+        /regionTreeImage/.test(state.html);
+
+      logDebug(
+        debug,
+        `regions container: loading=${stillLoading}, hasRegionMarkup=${hasRegionMarkup}, text=${JSON.stringify(
+          state.text.slice(0, 80)
+        )}`
+      );
+
+      if (!stillLoading && hasRegionMarkup) {
+        await page.waitForTimeout(200);
+        if ((await countRegionCheckboxes(page)) > 0) return true;
+      }
+    }
+
+    await page.waitForTimeout(150);
+  }
+
+  return false;
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   if (args.help) {
@@ -611,7 +712,7 @@ async function main() {
 
     logStep(`Applying report settings for ${args.start} -> ${args.end}`);
     await configureReport(page, startDate, endDate, args.timeoutMs);
-    await applyRegionSelection(page, locationConfig, args.timeoutMs);
+    await applyRegionSelection(page, locationConfig, args.timeoutMs, args.debug);
     await waitStepDelay(page, args.stepDelayMs);
 
     logStep("Running report");
