@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.zenvend.monthly-report.ob</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/marc/.nvm/versions/node/v25.8.0/bin/node</string>
+    <string>/Users/marc/Developer/zenvend/monthly-sales-reporting/scripts/scheduled-run.js</string>
+    <string>--location-key</string>
+    <string>old-bridge-ymca</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/marc/Developer/zenvend/monthly-sales-reporting</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Day</key>
+    <integer>5</integer>
+    <key>Hour</key>
+    <integer>8</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/marc/Developer/zenvend/monthly-sales-reporting/logs/launchd-ob.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/marc/Developer/zenvend/monthly-sales-reporting/logs/launchd-ob.err.log</string>
+</dict>
+</plist>

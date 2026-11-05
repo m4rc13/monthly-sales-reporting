@@ -40,6 +40,9 @@ function parseArgs(argv) {
     timeoutMs: 30000,
     reportTimeoutMs: 180000,
     stepDelayMs: 500,
+    // Prefer env vars so credentials never appear in shell history or `ps` output.
+    username: process.env.SEEDLIVE_USERNAME,
+    password: process.env.SEEDLIVE_PASSWORD,
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -99,8 +102,8 @@ function printHelp() {
       "  --params-url <url>            Direct report parameter URL",
       "  --download-dir <path>         Download output dir (default: input/json)",
       "  --profile-dir <path>          Playwright user data dir (default: .playwright-profile)",
-      "  --username <value>            Optional login username",
-      "  --password <value>            Optional login password",
+      "  --username <value>            Optional login username (or env SEEDLIVE_USERNAME)",
+      "  --password <value>            Optional login password (or env SEEDLIVE_PASSWORD)",
       "  --run-zvsales                 Run zvsales.js after download (default)",
       "  --no-run-zvsales              Skip payout calculation step",
       "  --generate-pdf, --pdf         Generate branded client PDF after export",

@@ -238,3 +238,33 @@ Optional args:
 - `--subject <text>` subject line
 - `--date <YYYY-MM-DD>` report date shown in PDF
 
+
+## Scheduled unattended runs (launchd)
+
+`scripts/scheduled-run.js` runs the report headless on a schedule and emails the PDF.
+
+- OB YMCA: 5th of each month, 8:00 AM, period = prior month 5th -> this month 4th, 25%
+- Manasquan Field House: 14th of each month, 8:00 AM, period = prior month 14th -> this month 13th, 20%
+- PDF saved to `reporting/OB/` or `reporting/Squan/`, emailed from marc@zenvend.co to marc@ and emma@zenvend.co
+- On failure, an alert with the log tail goes to marc@zenvend.co. Logs live in `logs/`.
+- A marker in `logs/state/` prevents re-sending the same period (`--force` overrides).
+
+One-time setup (credentials live in the macOS Keychain, never on the command line):
+
+```bash
+security add-generic-password -U -s zenvend-seedlive   -a marc@zenvend.co -w   # SeedLive password
+security add-generic-password -U -s zenvend-gmail-smtp -a marc@zenvend.co -w   # Google app password
+cp launchd/*.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.zenvend.monthly-report.ob.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.zenvend.monthly-report.squan.plist
+```
+
+Useful commands:
+
+```bash
+node scripts/scheduled-run.js --location-key old-bridge-ymca --dry-run            # show period only
+node scripts/scheduled-run.js --location-key old-bridge-ymca --to marc@zenvend.co --force   # test send to yourself
+launchctl kickstart gui/$(id -u)/co.zenvend.monthly-report.ob                      # trigger the real job now
+```
+
+Notes: the plists hardcode the nvm node path; update them if you change Node versions. If the Mac is asleep at 8:00 the job runs on wake; if it's powered off all day, that run is skipped.

@@ -16,3 +16,6 @@ html-files/
 .env
 .env.*
 
+
+# Scheduled-run logs
+logs/
